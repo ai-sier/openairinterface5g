@@ -31,7 +31,8 @@
 
 
 #include <string.h> // memset
-#include <stdlib.h> // malloc, free
+#include <stdlib.h> // malloc, free, getenv
+#include <stdbool.h> // bool (test error injection helper)
 
 #include "nas_log.h"
 #include "TLVDecoder.h"
@@ -637,6 +638,17 @@ static void decodeRegistrationAccept(uint8_t *buf, int len, nr_ue_nas_t *nas)
   }
 }
 
+/* [ADD:enc-check] Test-only anomaly injection switch for Registration Complete
+ * encoding. Enabled ONLY when environment variable
+ * OAI_TEST_FORCE_REGCOMPLETE_ENCODE_ERROR == "1". Any other value or unset
+ * keeps the original (normal) behaviour. This is self-contained in this file
+ * and adds no new CLI option (spec 5.1). */
+static bool force_registration_complete_encode_error(void)
+{
+  const char *value = getenv("OAI_TEST_FORCE_REGCOMPLETE_ENCODE_ERROR");
+  return value != NULL && strcmp(value, "1") == 0;
+}
+
 static void generateRegistrationComplete(nr_ue_nas_t *nas, as_nas_info_t *initialNasMsg, SORTransparentContainer *sortransparentcontainer)
 {
   //wait send RRCReconfigurationComplete and InitialContextSetupResponse
@@ -648,6 +660,12 @@ static void generateRegistrationComplete(nr_ue_nas_t *nas, as_nas_info_t *initia
   uint8_t             mac[4];
   memset(&nas_msg, 0, sizeof(fgs_nas_message_t));
   fgs_nas_message_security_protected_t *sp_msg;
+
+  /* [ADD:enc-check] Define a deterministic abort state up-front so that on any
+   * early return the caller's "length > 0" guard reliably suppresses the send
+   * (spec 6.1). */
+  initialNasMsg->data = NULL;
+  initialNasMsg->length = 0;
 
   sp_msg = &nas_msg.security_protected;
   // set header
@@ -668,35 +686,109 @@ static void generateRegistrationComplete(nr_ue_nas_t *nas, as_nas_info_t *initia
     length += sortransparentcontainer->sortransparentcontainercontents.length;
   }
 
+  /* [ADD:enc-check] (spec 6.2) NAS length sanity check BEFORE malloc(). A
+   * non-positive length would make malloc() behaviour undefined and would
+   * corrupt the size/length bookkeeping below. */
+  if (length <= 0) {
+    LOG_E(NAS, "generateRegistrationComplete: invalid NAS length (%d)\n", length);
+    initialNasMsg->data = NULL;
+    initialNasMsg->length = 0;
+    return;
+  }
+
   // encode the message
   initialNasMsg->data = (Byte_t *)malloc(length * sizeof(Byte_t));
 
+  /* [ADD:enc-check] (spec 6.3) malloc() NULL check placed BEFORE any write via
+   * ENCODE_U8 / ENCODE_U32 / encode_registration_complete(). */
+  if (initialNasMsg->data == NULL) {
+    LOG_E(NAS,
+          "generateRegistrationComplete: failed to allocate NAS buffer (length=%d)\n",
+          length);
+    initialNasMsg->length = 0;
+    return;
+  }
+
+  /* [ADD:enc-check] SOR/manual encode status. Declared before the first goto so
+   * that the error label does not jump over its initialisation. */
+  int reg_complete_encode_status = 0;
+
+  /* [ADD:enc-check] (spec 6.4) Residual-capacity guard executed BEFORE every
+   * write. ENCODE_U8 writes 1 byte, ENCODE_U32 writes 4 bytes (consistent with
+   * the length=7 header accounting of the attached source). On shortage we jump
+   * to the abort handler without writing. */
+  if (1 > length - size) goto regcomplete_encode_error;
   /* Encode the first octet of the header (extended protocol discriminator) */
   ENCODE_U8(initialNasMsg->data + size, sp_msg->header.protocol_discriminator, size);
-  
+
+  if (1 > length - size) goto regcomplete_encode_error;
   /* Encode the security header type */
   ENCODE_U8(initialNasMsg->data + size, sp_msg->header.security_header_type, size);
-  
+
+  if (4 > length - size) goto regcomplete_encode_error;
   /* Encode the message authentication code */
   ENCODE_U32(initialNasMsg->data + size, sp_msg->header.message_authentication_code, size);
-  
+
+  if (1 > length - size) goto regcomplete_encode_error;
   /* Encode the sequence number */
   ENCODE_U8(initialNasMsg->data + size, sp_msg->header.sequence_number, size);
-  
-  
+
+
+  if (1 > length - size) goto regcomplete_encode_error;
   /* Encode the extended protocol discriminator */
   ENCODE_U8(initialNasMsg->data + size, sp_msg->plain.mm_msg.registration_complete.protocoldiscriminator, size);
-    
+
+  if (1 > length - size) goto regcomplete_encode_error;
   /* Encode the security header type */
   ENCODE_U8(initialNasMsg->data + size, sp_msg->plain.mm_msg.registration_complete.securityheadertype, size);
-    
+
+  if (1 > length - size) goto regcomplete_encode_error;
   /* Encode the message type */
   ENCODE_U8(initialNasMsg->data + size, sp_msg->plain.mm_msg.registration_complete.messagetype, size);
 
   if(sortransparentcontainer) {
-    encode_registration_complete(&sp_msg->plain.mm_msg.registration_complete, initialNasMsg->data + size, length - size);
+    /* [ADD:enc-check] (spec 6.6) Capture the encode_registration_complete()
+     * return value (previously discarded). NOTE: RegistrationComplete.c is NOT
+     * attached, so the exact return convention cannot be confirmed. Per spec
+     * 6.6 fallback we treat ONLY a negative value as failure and we do NOT
+     * alter the existing size/length handling on a positive value, to avoid
+     * breaking the original call semantics. See report for this constraint. */
+    reg_complete_encode_status =
+        encode_registration_complete(&sp_msg->plain.mm_msg.registration_complete,
+                                     initialNasMsg->data + size,
+                                     length - size);
   }
-  
+
+  /* [ADD:enc-check] (spec 6.7) Test-only anomaly injection, applied AFTER a
+   * normal encode and immediately BEFORE the final anomaly evaluation. Never
+   * taken on a normal (env-unset) launch. */
+  if (force_registration_complete_encode_error()) {
+    LOG_W(NAS,
+          "[TEST] OAI_TEST_FORCE_REGCOMPLETE_ENCODE_ERROR=1: "
+          "Registration Complete encode error forced\n");
+    reg_complete_encode_status = -1;
+  }
+
+  /* [ADD:enc-check] (spec 6.6) Evaluate encode status: negative == failure. */
+  if (reg_complete_encode_status < 0) {
+    LOG_E(NAS,
+          "generateRegistrationComplete: RegistrationComplete encode status negative (%d)\n",
+          reg_complete_encode_status);
+    goto regcomplete_encode_error;
+  }
+
+  /* [ADD:enc-check] (spec 6.5) Final integrity check of the manually encoded
+   * header: size must be strictly positive and must not exceed the allocated
+   * length. This is the last consistency check and does not replace the
+   * per-write residual guards above. */
+  if (size <= 0 || size > length) {
+    LOG_E(NAS,
+          "generateRegistrationComplete: invalid encoded size (size=%d, length=%d)\n",
+          size,
+          length);
+    goto regcomplete_encode_error;
+  }
+
   initialNasMsg->length = length;
   stream_cipher.key        = nas->security.knas_int;
   stream_cipher.key_length = 16;
@@ -714,6 +806,21 @@ static void generateRegistrationComplete(nr_ue_nas_t *nas, as_nas_info_t *initia
   for(int i = 0; i < 4; i++){
      initialNasMsg->data[2+i] = mac[i];
   }
+  return;
+
+  /* [ADD:enc-check] (spec 6.8) Common abort handler. Reached only on a detected
+   * anomaly. It safely frees the send buffer (guarding against double free),
+   * resets data/length so the caller's send guard suppresses the transmission,
+   * and returns BEFORE any MAC computation or post-free buffer access. */
+regcomplete_encode_error:
+  if (initialNasMsg->data != NULL) {
+    free(initialNasMsg->data);
+    initialNasMsg->data = NULL;
+  }
+  initialNasMsg->length = 0;
+  LOG_E(NAS,
+        "generateRegistrationComplete: abort, NAS_UPLINK_DATA_REQ will NOT be sent\n");
+  return;
 }
 
 void decodeDownlinkNASTransport(as_nas_info_t *initialNasMsg, uint8_t * pdu_buffer){
