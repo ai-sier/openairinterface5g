@@ -86,10 +86,22 @@ typedef struct {
   uint32_t sm_counter;
 } ue_sa_security_key_t;
 
+/* [ADD:MRU] Minimal 5GMM state, added for Mobility Registration Update
+ * Registration Type selection (TS 24.501 5.5.1.2.4 / 5.5.1.3.2).
+ * Scope is intentionally limited to this single field; TAI/Registration
+ * Area change detection, T3512 timer, registration attempt counter and
+ * 5GS update status are NOT added (out of scope for this change; see
+ * MRU_AIコーディング仕様書_20260729.md section 8 "未実施範囲"). */
+typedef enum fgs_mm_state_e {
+  FGS_DEREGISTERED = 0,
+  FGS_REGISTERED,
+} fgs_mm_state_t;
+
 typedef struct {
   uicc_t *uicc;
   ue_sa_security_key_t security;
   Guti5GSMobileIdentity_t *guti;
+  fgs_mm_state_t fiveGMM_state; /* [ADD:MRU] default FGS_DEREGISTERED (zero-init, static storage) */
 } nr_ue_nas_t;
 
 typedef enum fgs_protocol_discriminator_e {

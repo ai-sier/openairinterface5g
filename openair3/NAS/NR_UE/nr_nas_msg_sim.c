@@ -419,6 +419,23 @@ nr_ue_nas_t *get_ue_nas_info(module_id_t module_id)
   return &nr_ue_nas;
 }
 
+/* [ADD:MRU] Select 5GS Registration Type for Registration Request generation.
+ * Minimal scope: only the internal 5GMM state (registered or not) is
+ * referenced. TAI/Registration Area change detection and T3512 expiry are
+ * NOT implemented (see MRU_AIコーディング仕様書_20260729.md, section 8
+ * "未実施範囲"). This is therefore NOT a full implementation of
+ * TS 24.501 5.5.1.3.2's initiation conditions a)-t).
+ * Returns INITIAL_REGISTRATION if the UE has not yet completed a
+ * registration (fiveGMM_state == FGS_DEREGISTERED); MOBILITY_REGISTRATION_UPDATING
+ * if the UE was previously registered (fiveGMM_state == FGS_REGISTERED). */
+static FGSRegistrationType select_fgs_registration_type(const nr_ue_nas_t *nas)
+{
+  if (nas->fiveGMM_state == FGS_REGISTERED) {
+    return MOBILITY_REGISTRATION_UPDATING;
+  }
+  return INITIAL_REGISTRATION;
+}
+
 void generateRegistrationRequest(as_nas_info_t *initialNasMsg, nr_ue_nas_t *nas)
 {
   int size = sizeof(mm_msg_header_t);
@@ -439,7 +456,7 @@ void generateRegistrationRequest(as_nas_info_t *initialNasMsg, nr_ue_nas_t *nas)
   size += 1;
   mm_msg->registration_request.messagetype = REGISTRATION_REQUEST;
   size += 1;
-  mm_msg->registration_request.fgsregistrationtype = INITIAL_REGISTRATION;
+  mm_msg->registration_request.fgsregistrationtype = select_fgs_registration_type(nas); /* [CHG:MRU] was INITIAL_REGISTRATION (fixed value) */
   mm_msg->registration_request.naskeysetidentifier.naskeysetidentifier = 1;
   size += 1;
   if(nas->guti){
@@ -635,6 +652,12 @@ static void decodeRegistrationAccept(uint8_t *buf, int len, nr_ue_nas_t *nas)
   } else {
     LOG_W(NAS, "no GUTI in registration accept\n");
   }
+  /* [ADD:MRU] TS 24.501 5.5.1.2.4 / 5.5.1.3.4: upon receipt of REGISTRATION
+   * ACCEPT, enter state 5GMM-REGISTERED. Minimal scope: state only;
+   * registration attempt counter and 5GS update status are NOT implemented
+   * (see MRU_AIコーディング仕様書_20260729.md, section 8 "未実施範囲"). */
+  nas->fiveGMM_state = FGS_REGISTERED;
+  LOG_I(NAS, "[UE] 5GMM state set to FGS_REGISTERED\n");
 }
 
 static void generateRegistrationComplete(nr_ue_nas_t *nas, as_nas_info_t *initialNasMsg, SORTransparentContainer *sortransparentcontainer)
