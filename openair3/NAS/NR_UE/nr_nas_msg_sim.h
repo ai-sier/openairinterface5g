@@ -97,11 +97,23 @@ typedef enum fgs_mm_state_e {
   FGS_REGISTERED,
 } fgs_mm_state_t;
 
+/* [ADD:MRU-Rev3][SPEC-01] Minimal 5GMM mode for observing the connection
+ * lifecycle (TS 24.501 5.1.3.2.1.1). Scope limited to IDLE/CONNECTED tracking
+ * needed to observe Registration Type selection on the normal path. RRC-inactive
+ * and periodic handling are intentionally out of scope (also unreachable in
+ * v2.4.0, where t3512/is_rrc_inactive are never assigned). */
+typedef enum fgs_mm_mode_e {
+  FGS_NOT_CONNECTED = 0,
+  FGS_IDLE,
+  FGS_CONNECTED,
+} fgs_mm_mode_t;
+
 typedef struct {
   uicc_t *uicc;
   ue_sa_security_key_t security;
   Guti5GSMobileIdentity_t *guti;
   fgs_mm_state_t fiveGMM_state; /* [ADD:MRU] default FGS_DEREGISTERED (zero-init, static storage) */
+  fgs_mm_mode_t  fiveGMM_mode;  /* [ADD:MRU-Rev3][SPEC-01] default FGS_NOT_CONNECTED (zero-init) */
 } nr_ue_nas_t;
 
 typedef enum fgs_protocol_discriminator_e {

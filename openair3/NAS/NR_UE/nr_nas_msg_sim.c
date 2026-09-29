@@ -431,8 +431,15 @@ nr_ue_nas_t *get_ue_nas_info(module_id_t module_id)
 static FGSRegistrationType select_fgs_registration_type(const nr_ue_nas_t *nas)
 {
   if (nas->fiveGMM_state == FGS_REGISTERED) {
+    /* [CHG:MRU-Rev3][SPEC-02] Registered UE -> mobility registration updating.
+     * periodic (t3512) and RRC-inactive branches are intentionally NOT
+     * implemented (also unreachable in v2.4.0). */
+    LOG_I(NAS, "[UE] select_fgs_registration_type: state=REGISTERED mode=%d -> MOBILITY_REGISTRATION_UPDATING\n",
+          nas->fiveGMM_mode);
     return MOBILITY_REGISTRATION_UPDATING;
   }
+  LOG_I(NAS, "[UE] select_fgs_registration_type: state=DEREGISTERED mode=%d -> INITIAL_REGISTRATION\n",
+        nas->fiveGMM_mode);
   return INITIAL_REGISTRATION;
 }
 
@@ -457,6 +464,10 @@ void generateRegistrationRequest(as_nas_info_t *initialNasMsg, nr_ue_nas_t *nas)
   mm_msg->registration_request.messagetype = REGISTRATION_REQUEST;
   size += 1;
   mm_msg->registration_request.fgsregistrationtype = select_fgs_registration_type(nas); /* [CHG:MRU] was INITIAL_REGISTRATION (fixed value) */
+  /* [ADD:MRU-Rev3][SPEC-03] Log the registration type actually stored into the
+   * Registration Request (0x01=INITIAL, 0x02=MOBILITY). */
+  LOG_I(NAS, "[UE] Registration Request fgsregistrationtype = 0x%02x\n",
+        mm_msg->registration_request.fgsregistrationtype);
   mm_msg->registration_request.naskeysetidentifier.naskeysetidentifier = 1;
   size += 1;
   if(nas->guti){
@@ -995,6 +1006,9 @@ void *nas_nrue_task(void *args_p)
 
         case NAS_CONN_ESTABLI_CNF: {
           LOG_I(NAS, "[UE %ld] Received %s: errCode %u, length %u\n", instance, ITTI_MSG_NAME(msg_p), NAS_CONN_ESTABLI_CNF(msg_p).errCode, NAS_CONN_ESTABLI_CNF(msg_p).nasMsg.length);
+          /* [ADD:MRU-Rev3][SPEC-01] AS connection established -> 5GMM-CONNECTED */
+          nas->fiveGMM_mode = FGS_CONNECTED;
+          LOG_I(NAS, "[UE] 5GMM mode set to FGS_CONNECTED\n");
 
           pdu_buffer = NAS_CONN_ESTABLI_CNF(msg_p).nasMsg.data;
           msg_type = get_msg_type(pdu_buffer, NAS_CONN_ESTABLI_CNF(msg_p).nasMsg.length);
@@ -1028,6 +1042,19 @@ void *nas_nrue_task(void *args_p)
       case NAS_CONN_RELEASE_IND:
         LOG_I(NAS, "[UE %ld] Received %s: cause %u\n", instance, ITTI_MSG_NAME (msg_p),
               NAS_CONN_RELEASE_IND (msg_p).cause);
+        /* [ADD:MRU-Rev3][SPEC-01] AS connection released -> 5GMM-IDLE */
+        nas->fiveGMM_mode = FGS_IDLE;
+        LOG_I(NAS, "[UE] 5GMM mode set to FGS_IDLE\n");
+        /* [ADD:MRU-Rev3][SPEC-06 observability only] If already registered, a
+         * Mobility Registration Update would be sent on the NEXT RRC connection
+         * setup. Re-establishing that connection (idle -> reselection -> new
+         * RRCSetupComplete -> generateRegistrationRequest) is driven by RRC and
+         * the lower layers and is NOT implemented here (要追加調査; see
+         * scope_decision.md ATTACH A / porting_spec.md SPEC-06). The existing
+         * termination handling below is intentionally kept unchanged. */
+        if (nas->fiveGMM_state == FGS_REGISTERED)
+          LOG_W(NAS, "[UE] Registered UE went IDLE: MRU re-registration trigger depends on "
+                     "RRC/lower-layer reconnection (not implemented, 要追加調査)\n");
         /* the following is not clean, but probably necessary: we need to give
          * time to RLC to Ack the SRB1 PDU which contained the RRC release
          * message. Hence, we just below wait some time, before finally
@@ -1085,6 +1112,10 @@ void *nas_nrue_task(void *args_p)
             break;
           case FGS_DEREGISTRATION_ACCEPT:
             LOG_I(NAS, "received deregistration accept\n");
+            /* [ADD:MRU-Rev3][SPEC-05] Return to 5GMM-DEREGISTERED so a later
+             * registration correctly selects INITIAL_REGISTRATION. */
+            nas->fiveGMM_state = FGS_DEREGISTERED;
+            LOG_I(NAS, "[UE] 5GMM state set to FGS_DEREGISTERED\n");
             break;
 	case FGS_PDU_SESSION_ESTABLISHMENT_ACC:
 	  {
