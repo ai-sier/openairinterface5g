@@ -2513,10 +2513,10 @@ static void filter_ssb_cycle(l3_measurements_t *l3m, const NR_MeasObjectNR_t *mo
   bool thr_configured = false;
   int thr_dBm = 0;
   if (mo && mo->nrofSS_BlocksToAverage && mo->absThreshSS_BlocksConsolidation
-      && mo->absThreshSS_BlocksConsolidation->rsrp) {
+      && mo->absThreshSS_BlocksConsolidation->thresholdRSRP) {
     nrof = *mo->nrofSS_BlocksToAverage;
     thr_configured = true;
-    thr_dBm = *mo->absThreshSS_BlocksConsolidation->rsrp - 156;
+    thr_dBm = *mo->absThreshSS_BlocksConsolidation->thresholdRSRP - 156;
   }
   double rsrp, rsrq;
   bool rsrq_valid;
