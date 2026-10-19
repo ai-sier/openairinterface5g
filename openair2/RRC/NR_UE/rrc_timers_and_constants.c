@@ -139,6 +139,13 @@ void handle_meas_timers(NR_UE_RRC_INST_t *rrc)
       }
     }
 
+    // periodical reporting (the first report is sent when it is started)
+    for (int id = 0; id < NR_MEAS_PERIODIC_MAX; id++) {
+      nr_meas_periodic_t *e = &l3_measurements->periodic[id];
+      if (e->active && nr_meas_periodic_tick(e))
+        nr_rrc_periodic_report_due(rrc, nb, id);
+    }
+
     bool periodic_expired = nr_timer_tick(&l3_measurements->periodic_report_timer);
     if (periodic_expired && l3_measurements->reports_sent < l3_measurements->max_reports) {
       rrc_ue_generate_measurementReport(nb, rrc->ue_id);

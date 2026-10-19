@@ -907,6 +907,47 @@ int do_nrMeasurementReport_SA(long trigger_to_measid,
   return ((enc_rval.encoded + 7) / 8);
 }
 
+int do_nrMeasurementReport_periodical(long measId,
+                                      long servCellId,
+                                      int rsrp_index,
+                                      int rsrq_index,
+                                      bool rsrq_valid,
+                                      uint8_t *buffer,
+                                      size_t buffer_size)
+{
+  NR_UL_DCCH_Message_t ul_dcch_msg = {0};
+
+  ul_dcch_msg.message.present = NR_UL_DCCH_MessageType_PR_c1;
+  asn1cCalloc(ul_dcch_msg.message.choice.c1, c1);
+  c1->present = NR_UL_DCCH_MessageType__c1_PR_measurementReport;
+
+  asn1cCalloc(c1->choice.measurementReport, measurementReport);
+  measurementReport->criticalExtensions.present = NR_MeasurementReport__criticalExtensions_PR_measurementReport;
+
+  asn1cCalloc(measurementReport->criticalExtensions.choice.measurementReport, mrIE);
+  mrIE->measResults.measId = measId;
+
+  NR_MeasResultServMO_t *measResultServMo = calloc_or_fail(1, sizeof(*measResultServMo));
+  measResultServMo->servCellId = servCellId;
+
+  struct NR_MeasQuantityResults *mq_res = calloc_or_fail(1, sizeof(*mq_res));
+  asn1cCallocOne(mq_res->rsrp, rsrp_index);
+  if (rsrq_valid)
+    asn1cCallocOne(mq_res->rsrq, rsrq_index);
+  measResultServMo->measResultServingCell.measResult.cellResults.resultsSSB_Cell = mq_res;
+  ASN_SEQUENCE_ADD(&mrIE->measResults.measResultServingMOList.list, measResultServMo);
+
+  asn_enc_rval_t enc_rval = uper_encode_to_buffer(&asn_DEF_NR_UL_DCCH_Message, NULL, (void *)&ul_dcch_msg, buffer, buffer_size);
+  if (LOG_DEBUGFLAG(DEBUG_ASN1))
+    xer_fprint(stdout, &asn_DEF_NR_UL_DCCH_Message, (void *)&ul_dcch_msg);
+  ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_NR_UL_DCCH_Message, &ul_dcch_msg);
+  if (enc_rval.encoded <= 0) {
+    LOG_E(NR_RRC, "periodical MeasurementReport encoding failed (%s, %zd)\n", enc_rval.failed_type ? enc_rval.failed_type->name : "?", enc_rval.encoded);
+    return -1;
+  }
+  return (enc_rval.encoded + 7) / 8;
+}
+
 int do_NR_DLInformationTransfer(uint8_t *buffer,
                                 size_t buffer_len,
                                 uint8_t transaction_id,

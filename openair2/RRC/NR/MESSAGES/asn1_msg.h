@@ -134,6 +134,16 @@ int do_nrMeasurementReport_SA(long trigger_to_measid,
                               uint8_t *buffer,
                               size_t buffer_size);
 
+/** @brief Encodes the MeasurementReport of a periodical report (serving cell SSB RSRP and optionally RSRQ).
+ *  @return number of bytes, or -1 if the encoding fails */
+int do_nrMeasurementReport_periodical(long measId,
+                                      long servCellId,
+                                      int rsrp_index,
+                                      int rsrq_index,
+                                      bool rsrq_valid,
+                                      uint8_t *buffer,
+                                      size_t buffer_size);
+
 int do_NR_RRCReconfigurationComplete_for_nsa(uint8_t *buffer, size_t buffer_size, NR_RRC_TransactionIdentifier_t Transaction_id);
 
 int do_NR_RRCReconfigurationComplete(uint8_t *buffer, size_t buffer_size, const uint8_t Transaction_id);

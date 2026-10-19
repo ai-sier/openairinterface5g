@@ -57,4 +57,31 @@ bool nr_meas_periodic_reset(nr_meas_periodic_t *list, long measId);
 /* Same for all entries. Returns the number of entries that were active. */
 int nr_meas_periodic_reset_all(nr_meas_periodic_t *list);
 
+
+/* TS 38.331 FilterCoefficient (fc0..fc14) to a = 1 / 2^(k/4), with k = {0..9, 11, 13, 15, 17, 19}.
+ * NULL (absent) means fc4. An invalid value is also treated as fc4. */
+double nr_l3_filter_coefficient(const long *fc);
+
+/* Measurement of one SSB (beam) in the current measurement cycle */
+typedef struct {
+  bool valid;
+  int rsrp_dBm;
+  double rsrq_dB;
+  bool rsrq_valid;
+} nr_l3_beam_t;
+
+/* TS 38.331 5.5.3.3: derive the cell value from the beam values.
+ * Without nrofSS-BlocksToAverage and absThreshSS-BlocksConsolidation (nrof_to_average = 0, thr_configured = false) the highest beam
+ * is used. Otherwise it is the linear average of the highest beams (at most nrof_to_average) at or above the threshold;
+ * if no beam reaches the threshold, the highest beam is used.
+ * Returns false if there is no valid beam. rsrq is the linear average over the selected beams that have a valid RSRQ. */
+bool nr_l3_consolidate_beams(const nr_l3_beam_t *beams,
+                             int nb_beams,
+                             int nrof_to_average,
+                             bool thr_configured,
+                             int thr_rsrp_dBm,
+                             double *rsrp_dBm,
+                             double *rsrq_dB,
+                             bool *rsrq_valid);
+
 #endif

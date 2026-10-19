@@ -862,7 +862,7 @@ static void nr_rrc_process_reconfiguration_v1530(NR_UE_RRC_INST_t *rrc, NR_RRCRe
   }
 }
 
-static void handle_meas_reporting_remove(rrcPerNB_t *rrc, int id, NR_UE_Timers_Constants_t *timers)
+static void handle_meas_reporting_remove(rrcPerNB_t *rrc, int id, NR_UE_Timers_Constants_t *timers, const char *reason)
 {
   // remove the measurement reporting entry for this measId if included
   asn1cFreeStruc(asn_DEF_NR_VarMeasReport, rrc->MeasReport[id]);
@@ -877,6 +877,10 @@ static void handle_meas_reporting_remove(rrcPerNB_t *rrc, int id, NR_UE_Timers_C
   l3_measurements->reports_sent = 0;
   l3_measurements->max_reports = 0;
   l3_measurements->report_interval_ms = 0;
+
+  // stop the periodical reporting of this measId and reset numberOfReportsSent
+  if (nr_meas_periodic_reset(l3_measurements->periodic, id))
+    LOG_I(NR_RRC, "PERIODIC_MEAS_RESET measId=%d reason=%s\n", id, reason);
 }
 
 static void handle_measobj_remove(rrcPerNB_t *rrc, struct NR_MeasObjectToRemoveList *remove_list, NR_UE_Timers_Constants_t *timers)
@@ -893,7 +897,7 @@ static void handle_measobj_remove(rrcPerNB_t *rrc, struct NR_MeasObjectToRemoveL
       for (int j = 0; j < MAX_MEAS_ID; j++) {
         if (rrc->MeasId[j] && rrc->MeasId[j]->measObjectId == id) {
           asn1cFreeStruc(asn_DEF_NR_MeasIdToAddMod, rrc->MeasId[j]);
-          handle_meas_reporting_remove(rrc, j, timers);
+          handle_meas_reporting_remove(rrc, j, timers, "remove");
         }
       }
     }
@@ -972,6 +976,11 @@ static void handle_measobj_addmod(rrcPerNB_t *rrc, struct NR_MeasObjectToAddModL
     NR_MeasObjectId_t id = measObj->measObjectId;
     if (rrc->MeasObj[id]) {
       update_nr_measobj(measObj->measObject.choice.measObjectNR, rrc->MeasObj[id]->measObject.choice.measObjectNR);
+      // the periodical reporting of every measId using this measObject restarts
+      for (int j = 0; j < MAX_MEAS_ID; j++) {
+        if (rrc->MeasId[j] && rrc->MeasId[j]->measObjectId == id && nr_meas_periodic_reset(rrc->l3_measurements.periodic, j))
+          LOG_I(NR_RRC, "PERIODIC_MEAS_RESET measId=%d reason=modify\n", j);
+      }
     }
     else {
       // add a new entry for the received measObject to the measObjectList
@@ -992,7 +1001,7 @@ static void handle_reportconfig_remove(rrcPerNB_t *rrc,
       if (rrc->MeasId[j] && rrc->MeasId[j]->reportConfigId == id) {
         // remove all measId associated with the reportConfigId from the measIdList
         asn1cFreeStruc(asn_DEF_NR_MeasIdToAddMod, rrc->MeasId[j]);
-        handle_meas_reporting_remove(rrc, j, timers);
+        handle_meas_reporting_remove(rrc, j, timers, "remove");
       }
     }
   }
@@ -1013,7 +1022,7 @@ static void handle_reportconfig_addmod(rrcPerNB_t *rrc,
       for (int j = 0; j < MAX_MEAS_ID; j++) {
         // for each measId associated with this reportConfigId included in the measIdList
         if (rrc->MeasId[j] && rrc->MeasId[j]->reportConfigId == id)
-          handle_meas_reporting_remove(rrc, j, timers);
+          handle_meas_reporting_remove(rrc, j, timers, "modify");
       }
     }
     UPDATE_IE(rrc->ReportConfig[id], addmod_list->list.array[i], NR_ReportConfigToAddMod_t);
@@ -1032,10 +1041,9 @@ static void handle_quantityconfig(rrcPerNB_t *rrc, NR_QuantityConfig_t *quantity
       // TS 38.331 - 5.5.3.2 Layer 3 filtering
       NR_QuantityConfigRS_t *qcc = &quantityNR->quantityConfigCell;
       l3_measurements_t *l3_measurements = &rrc->l3_measurements;
-      if (qcc->ssb_FilterConfig.filterCoefficientRSRP)
-        l3_measurements->ssb_filter_coeff_rsrp = 1. / pow(2, (*qcc->ssb_FilterConfig.filterCoefficientRSRP) / 4);
-      if (qcc->csi_RS_FilterConfig.filterCoefficientRSRP)
-        l3_measurements->csi_RS_filter_coeff_rsrp = 1. / pow(2, (*qcc->csi_RS_FilterConfig.filterCoefficientRSRP) / 4);
+      l3_measurements->ssb_filter_coeff_rsrp = (float)nr_l3_filter_coefficient(qcc->ssb_FilterConfig.filterCoefficientRSRP);
+      l3_measurements->csi_RS_filter_coeff_rsrp = (float)nr_l3_filter_coefficient(qcc->csi_RS_FilterConfig.filterCoefficientRSRP);
+      l3_measurements->filter_coeff_rsrq = (float)nr_l3_filter_coefficient(qcc->ssb_FilterConfig.filterCoefficientRSRQ);
       if (quantityNR->quantityConfigRS_Index)
         UPDATE_IE(rrc->QuantityConfig[i]->quantityConfigRS_Index, quantityNR->quantityConfigRS_Index, struct NR_QuantityConfigRS);
     }
@@ -1043,7 +1051,7 @@ static void handle_quantityconfig(rrcPerNB_t *rrc, NR_QuantityConfig_t *quantity
   for (int j = 0; j < MAX_MEAS_ID; j++) {
     // for each measId included in the measIdList
     if (rrc->MeasId[j])
-      handle_meas_reporting_remove(rrc, j, timers);
+      handle_meas_reporting_remove(rrc, j, timers, "quantityConfig");
   }
 }
 
@@ -1053,7 +1061,7 @@ static void handle_measid_remove(rrcPerNB_t *rrc, struct NR_MeasIdToRemoveList *
     NR_MeasId_t id = *remove_list->list.array[i];
     if (rrc->MeasId[id]) {
       asn1cFreeStruc(asn_DEF_NR_MeasIdToAddMod, rrc->MeasId[id]);
-      handle_meas_reporting_remove(rrc, id, timers);
+      handle_meas_reporting_remove(rrc, id, timers, "remove");
     }
   }
 }
@@ -1065,7 +1073,7 @@ static void handle_measid_addmod(rrcPerNB_t *rrc, struct NR_MeasIdToAddModList *
     NR_ReportConfigId_t reportId = addmod_list->list.array[i]->reportConfigId;
     NR_MeasObjectId_t measObjectId = addmod_list->list.array[i]->measObjectId;
     UPDATE_IE(rrc->MeasId[id], addmod_list->list.array[i], NR_MeasIdToAddMod_t);
-    handle_meas_reporting_remove(rrc, id, timers);
+    handle_meas_reporting_remove(rrc, id, timers, "modify");
     if (rrc->ReportConfig[reportId]) {
       NR_ReportConfigToAddMod_t *report = rrc->ReportConfig[reportId];
       AssertFatal(report->reportConfig.present == NR_ReportConfigToAddMod__reportConfig_PR_reportConfigNR,
@@ -1095,6 +1103,9 @@ static void handle_measid_addmod(rrcPerNB_t *rrc, struct NR_MeasIdToAddModList *
     }
   }
 }
+
+static const NR_PeriodicalReportConfig_t *get_periodical_config(const rrcPerNB_t *nb, long measId);
+static long get_measurement_report_interval_ms(NR_ReportInterval_t interval);
 
 static void nr_rrc_ue_process_measConfig(rrcPerNB_t *rrc, NR_MeasConfig_t *const measConfig, NR_UE_Timers_Constants_t *timers)
 {
@@ -1127,6 +1138,20 @@ static void nr_rrc_ue_process_measConfig(rrcPerNB_t *rrc, NR_MeasConfig_t *const
     } else if (measConfig->s_MeasureConfig->present == NR_MeasConfig__s_MeasureConfig_PR_csi_RSRP) {
       rrc->s_measure = measConfig->s_MeasureConfig->choice.csi_RSRP;
     }
+  }
+
+  for (int id = 1; id < MAX_MEAS_ID; id++) {
+    const NR_PeriodicalReportConfig_t *pc = get_periodical_config(rrc, id);
+    if (!pc)
+      continue;
+    LOG_I(NR_RRC,
+          "PERIODIC_MEASCONFIG_RX measId=%d interval=%ld amount=%ld rsrp=%d rsrq=%d sinr=%d\n",
+          id,
+          get_measurement_report_interval_ms(pc->reportInterval),
+          pc->reportAmount == NR_PeriodicalReportConfig__reportAmount_infinity ? 0L : (1L << pc->reportAmount),
+          pc->reportQuantityCell ? pc->reportQuantityCell->rsrp : 0,
+          pc->reportQuantityCell ? pc->reportQuantityCell->rsrq : 0,
+          pc->reportQuantityCell ? pc->reportQuantityCell->sinr : 0);
   }
 }
 
@@ -1304,6 +1329,7 @@ NR_UE_RRC_INST_t* nr_rrc_init_ue(char* uecap_file, int instance_id, int num_ant_
 
   memset(&rrc->timers_and_constants, 0, sizeof(rrc->timers_and_constants));
   set_default_timers_and_constants(&rrc->timers_and_constants);
+  rrc->serving_cell_mo = 0;
 
   for (int j = 0; j < NR_NUM_SRB; j++)
     rrc->Srb[j] = RB_NOT_PRESENT;
@@ -1320,6 +1346,7 @@ NR_UE_RRC_INST_t* nr_rrc_init_ue(char* uecap_file, int instance_id, int num_ant_
     ptr->l3_measurements = (l3_measurements_t){0};
     ptr->l3_measurements.ssb_filter_coeff_rsrp = 1.0f;
     ptr->l3_measurements.csi_RS_filter_coeff_rsrp = 1.0f;
+    ptr->l3_measurements.filter_coeff_rsrq = 1.0f;
     init_SI_timers(&ptr->SInfo);
   }
 
@@ -1799,6 +1826,11 @@ void nr_rrc_cellgroup_configuration(NR_UE_RRC_INST_t *rrc, NR_CellGroupConfig_t 
       if (spCellConfig->spCellConfigDedicated->uplinkConfig &&
           spCellConfig->spCellConfigDedicated->uplinkConfig->firstActiveUplinkBWP_Id)
         rrc->dl_bwp_id = *spCellConfig->spCellConfigDedicated->uplinkConfig->firstActiveUplinkBWP_Id;
+      // servingCellMO designates the measObject of the serving cell; it is kept when absent
+      if (spCellConfig->spCellConfigDedicated->servingCellMO) {
+        rrc->serving_cell_mo = *spCellConfig->spCellConfigDedicated->servingCellMO;
+        LOG_I(NR_RRC, "PERIODIC_SERVING_MO id=%ld\n", rrc->serving_cell_mo);
+      }
     }
   }
 
@@ -2454,7 +2486,56 @@ static void apply_ema(val_init_t *vi_rsrp_dBm, float filter_coeff_rsrp, int rsrp
   *meas_init = true;
 }
 
-void nr_ue_meas_filtering(rrcPerNB_t *rrc, bool is_neighboring_cell, uint16_t Nid_cell, bool csi_meas, int rsrp_dBm)
+// measObjectNR of the serving cell, designated by servingCellMO (NULL if not available)
+static const NR_MeasObjectNR_t *get_serving_measobj(const NR_UE_RRC_INST_t *rrc, const rrcPerNB_t *nb)
+{
+  long mo = rrc->serving_cell_mo;
+  // MeasObj is indexed by measObjectId, as in handle_measobj_addmod
+  if (mo <= 0 || mo >= MAX_MEAS_OBJ || !nb->MeasObj[mo])
+    return NULL;
+  if (nb->MeasObj[mo]->measObject.present != NR_MeasObjectToAddMod__measObject_PR_measObjectNR)
+    return NULL;
+  return nb->MeasObj[mo]->measObject.choice.measObjectNR;
+}
+
+static void apply_ema_rsrq(l3_measurements_t *l3m, double rsrq_dB)
+{
+  // the first measurement gets full weight
+  float coef = l3m->filtered_rsrq_valid ? l3m->filter_coeff_rsrq : 1.0f;
+  l3m->filtered_rsrq_dB = (1.0f - coef) * l3m->filtered_rsrq_dB + coef * rsrq_dB;
+  l3m->filtered_rsrq_valid = true;
+}
+
+// TS 38.331 5.5.3.3: derive the serving cell value from the SSB beams of one measurement cycle, then apply the layer 3 filter
+static void filter_ssb_cycle(l3_measurements_t *l3m, const NR_MeasObjectNR_t *mo)
+{
+  int nrof = 0;
+  bool thr_configured = false;
+  int thr_dBm = 0;
+  if (mo && mo->nrofSS_BlocksToAverage && mo->absThreshSS_BlocksConsolidation
+      && mo->absThreshSS_BlocksConsolidation->rsrp) {
+    nrof = *mo->nrofSS_BlocksToAverage;
+    thr_configured = true;
+    thr_dBm = *mo->absThreshSS_BlocksConsolidation->rsrp - 156;
+  }
+  double rsrp, rsrq;
+  bool rsrq_valid;
+  if (!nr_l3_consolidate_beams(l3m->beams, NR_MEAS_PERIODIC_MAX, nrof, thr_configured, thr_dBm, &rsrp, &rsrq, &rsrq_valid))
+    return;
+  apply_ema(&l3m->serving_cell.ss_rsrp_dBm, l3m->ssb_filter_coeff_rsrp, (int)lround(rsrp));
+  if (rsrq_valid)
+    apply_ema_rsrq(l3m, rsrq);
+}
+
+void nr_ue_meas_filtering(rrcPerNB_t *rrc,
+                          bool is_neighboring_cell,
+                          uint16_t Nid_cell,
+                          bool csi_meas,
+                          int rsrp_dBm,
+                          int ssb_index,
+                          int16_t rsrq_dB_x2,
+                          bool rsrq_valid,
+                          const NR_MeasObjectNR_t *serving_mo)
 {
   if (is_neighboring_cell)
     return;
@@ -2464,13 +2545,36 @@ void nr_ue_meas_filtering(rrcPerNB_t *rrc, bool is_neighboring_cell, uint16_t Ni
   if (meas_cell->Nid_cell != Nid_cell) {
     meas_cell->ss_rsrp_dBm.init = false;
     meas_cell->csi_rsrp_dBm.init = false;
+    l3_measurements->filtered_rsrq_valid = false;
+    memset(l3_measurements->beams, 0, sizeof(l3_measurements->beams));
   }
   meas_cell->Nid_cell = Nid_cell;
 
-  if (csi_meas)
+  if (csi_meas) {
     apply_ema(&meas_cell->csi_rsrp_dBm, l3_measurements->csi_RS_filter_coeff_rsrp, rsrp_dBm);
-  else
+    return;
+  }
+
+  if (ssb_index < 0 || ssb_index >= NR_MEAS_PERIODIC_MAX) {
     apply_ema(&meas_cell->ss_rsrp_dBm, l3_measurements->ssb_filter_coeff_rsrp, rsrp_dBm);
+    if (rsrq_valid)
+      apply_ema_rsrq(l3_measurements, rsrq_dB_x2 / 2.0);
+    return;
+  }
+
+  nr_l3_beam_t *beam = &l3_measurements->beams[ssb_index];
+  // a repeated SSB index means that the next measurement cycle has started
+  if (beam->valid) {
+    filter_ssb_cycle(l3_measurements, serving_mo);
+    memset(l3_measurements->beams, 0, sizeof(l3_measurements->beams));
+  }
+  beam->valid = true;
+  beam->rsrp_dBm = rsrp_dBm;
+  beam->rsrq_dB = rsrq_dB_x2 / 2.0;
+  beam->rsrq_valid = rsrq_valid;
+  // provisional value until the first cycle is complete
+  if (!meas_cell->ss_rsrp_dBm.init)
+    filter_ssb_cycle(l3_measurements, serving_mo);
 }
 
 static long get_measurement_report_interval_ms(NR_ReportInterval_t interval)
@@ -2505,10 +2609,41 @@ static long get_measurement_report_interval_ms(NR_ReportInterval_t interval)
   }
 }
 
+static const NR_PeriodicalReportConfig_t *get_periodical_config(const rrcPerNB_t *nb, long measId);
+
+// Starts the periodical reporting of the measId that satisfy the conditions of TS 38.331 5.5.2.2 / 5.5.4.1
+static void nr_ue_check_periodic_start(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *rrcNB)
+{
+  l3_measurements_t *l3m = &rrcNB->l3_measurements;
+  const NR_MeasObjectNR_t *mo = get_serving_measobj(rrc, rrcNB);
+  if (!rrc->as_security_activated || !mo || !mo->referenceSignalConfig.ssb_ConfigMobility
+      || !l3m->serving_cell.ss_rsrp_dBm.init)
+    return;
+  // s-MeasureConfig (ssb-RSRP) absent, or the filtered SpCell RSRP is below it
+  if (rrcNB->s_measure != 0 && l3m->serving_cell.ss_rsrp_dBm.val >= (int)rrcNB->s_measure - 156)
+    return;
+
+  for (int id = 1; id < MAX_MEAS_ID; id++) {
+    if (l3m->periodic[id].active)
+      continue;
+    const NR_PeriodicalReportConfig_t *pc = get_periodical_config(rrcNB, id);
+    if (!pc || pc->rsType != NR_NR_RS_Type_ssb)
+      continue;
+    long amount = pc->reportAmount == NR_PeriodicalReportConfig__reportAmount_infinity ? NR_MEAS_PERIODIC_INFINITE
+                                                                                         : (1L << pc->reportAmount);
+    if (!nr_meas_periodic_start(l3m->periodic, id, rrcNB->MeasId[id]->reportConfigId, amount,
+                                get_measurement_report_interval_ms(pc->reportInterval)))
+      continue;
+    nr_rrc_periodic_report_due(rrc, rrcNB, id);
+  }
+}
+
 static void nr_ue_check_meas_report(NR_UE_RRC_INST_t *rrc, const uint8_t gnb_index)
 {
   rrcPerNB_t *rrcNB = rrc->perNB + gnb_index;
   l3_measurements_t *l3_measurements = &rrcNB->l3_measurements;
+
+  nr_ue_check_periodic_start(rrc, rrcNB);
 
   for (int i = 0; i < MAX_MEAS_CONFIG; i++) {
     NR_ReportConfigToAddMod_t *report_config = rrcNB->ReportConfig[i];
@@ -2710,18 +2845,25 @@ void *rrc_nrue(void *notUsed)
                                              sbcch->sdu_size, sbcch->rx_slss_id);
   case NR_RRC_MAC_MEAS_DATA_IND:
 
-    LOG_D(NR_RRC, "[%s][Nid_cell %i] Received %s measurements: RSRP = %i (dBm)\n",
+    LOG_D(NR_RRC, "[%s][Nid_cell %i] Received %s measurements: RSRP = %i (dBm), SSB index = %i, RSRQ = %s %.1f (dB)\n",
           NR_RRC_MAC_MEAS_DATA_IND(msg_p).is_neighboring_cell? "Neighboring cell" : "Active cell",
           NR_RRC_MAC_MEAS_DATA_IND(msg_p).Nid_cell,
           NR_RRC_MAC_MEAS_DATA_IND(msg_p).is_csi_meas ? "CSI meas" : "SSB meas",
-          NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrp_dBm);
+          NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrp_dBm,
+          NR_RRC_MAC_MEAS_DATA_IND(msg_p).ssb_index,
+          NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrq_valid ? "" : "(invalid)",
+          NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrq_dB_x2 / 2.0);
 
     rrcPerNB_t *rrcNB = rrc->perNB + NR_RRC_MAC_MEAS_DATA_IND(msg_p).gnb_index;
     nr_ue_meas_filtering(rrcNB,
                          NR_RRC_MAC_MEAS_DATA_IND(msg_p).is_neighboring_cell,
                          NR_RRC_MAC_MEAS_DATA_IND(msg_p).Nid_cell,
                          NR_RRC_MAC_MEAS_DATA_IND(msg_p).is_csi_meas,
-                         NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrp_dBm);
+                         NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrp_dBm,
+                         NR_RRC_MAC_MEAS_DATA_IND(msg_p).ssb_index,
+                         NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrq_dB_x2,
+                         NR_RRC_MAC_MEAS_DATA_IND(msg_p).rsrq_valid,
+                         get_serving_measobj(rrc, rrcNB));
     nr_ue_check_meas_report(rrc, NR_RRC_MAC_MEAS_DATA_IND(msg_p).gnb_index);
     break;
 
@@ -2965,6 +3107,13 @@ void nr_rrc_going_to_IDLE(NR_UE_RRC_INST_t *rrc,
   nr_timer_stop(&tac->T311);
   nr_timer_stop(&tac->T319);
 
+  // stop the periodical measurement reporting and reset numberOfReportsSent
+  int nb_periodic_reset = 0;
+  for (int i = 0; i < NB_CNX_UE; i++)
+    nb_periodic_reset += nr_meas_periodic_reset_all(rrc->perNB[i].l3_measurements.periodic);
+  if (nb_periodic_reset > 0)
+    LOG_I(NR_RRC, "PERIODIC_MEAS_RESET measId=all reason=idle\n");
+
   // discard the UE Inactive AS context
   // TODO there is no inactive AS context
 
@@ -3134,4 +3283,71 @@ void rrc_ue_generate_measurementReport(rrcPerNB_t *rrc, instance_t ue_id)
 
   int srb_id = 1; // possibly TODO in SRB3 in some cases
   nr_pdcp_data_req_srb(ue_id, srb_id, 0, size, buffer, deliver_pdu_srb_rlc, NULL);
+}
+
+static const NR_PeriodicalReportConfig_t *get_periodical_config(const rrcPerNB_t *nb, long measId)
+{
+  if (measId <= 0 || measId >= MAX_MEAS_ID || !nb->MeasId[measId])
+    return NULL;
+  long rcid = nb->MeasId[measId]->reportConfigId;
+  if (rcid < 0 || rcid >= MAX_MEAS_CONFIG || !nb->ReportConfig[rcid])
+    return NULL;
+  const NR_ReportConfigToAddMod_t *rc = nb->ReportConfig[rcid];
+  if (rc->reportConfig.present != NR_ReportConfigToAddMod__reportConfig_PR_reportConfigNR)
+    return NULL;
+  const NR_ReportConfigNR_t *nr = rc->reportConfig.choice.reportConfigNR;
+  if (nr->reportType.present != NR_ReportConfigNR__reportType_PR_periodical)
+    return NULL;
+  return nr->reportType.choice.periodical;
+}
+
+// Sends a MeasurementReport of the periodical reporting of measId on SRB1. Returns false if it could not be encoded.
+static bool rrc_ue_generate_periodic_measurementReport(rrcPerNB_t *nb, instance_t ue_id, long measId, long *rsrp_idx, long *rsrq_idx)
+{
+  const NR_PeriodicalReportConfig_t *pc = get_periodical_config(nb, measId);
+  l3_measurements_t *l3m = &nb->l3_measurements;
+  if (!pc || !l3m->serving_cell.ss_rsrp_dBm.init)
+    return false;
+
+  *rsrp_idx = nr_rsrp_to_l3_range(l3m->serving_cell.ss_rsrp_dBm.val);
+  // RSRQ is reported if configured in reportQuantityCell and a valid value exists
+  bool rsrq_valid = pc->reportQuantityCell && pc->reportQuantityCell->rsrq && l3m->filtered_rsrq_valid;
+  *rsrq_idx = rsrq_valid ? nr_rsrq_to_l3_range(l3m->filtered_rsrq_dB) : -1;
+
+  uint8_t buffer[NR_RRC_BUF_SIZE];
+  int size = do_nrMeasurementReport_periodical(measId, 0, *rsrp_idx, rsrq_valid ? *rsrq_idx : 0, rsrq_valid, buffer, sizeof(buffer));
+  if (size <= 0) {
+    LOG_E(NR_RRC, "Failed to encode the periodical MeasurementReport of measId %ld\n", measId);
+    return false;
+  }
+  int srb_id = 1;
+  nr_pdcp_data_req_srb(ue_id, srb_id, 0, size, buffer, deliver_pdu_srb_rlc, NULL);
+  return true;
+}
+
+// Sends the report of measId and arms the timer for the next one (TS 38.331 5.5.5)
+void nr_rrc_periodic_report_due(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *nb, long measId)
+{
+  nr_meas_periodic_t *e = &nb->l3_measurements.periodic[measId];
+  long rsrp_idx = 0;
+  long rsrq_idx = -1;
+  if (!rrc_ue_generate_periodic_measurementReport(nb, rrc->ue_id, measId, &rsrp_idx, &rsrq_idx)) {
+    // not counted as sent, try again after one interval
+    nr_timer_setup(&e->timer, e->interval_ms, 10);
+    nr_timer_start(&e->timer);
+    return;
+  }
+  bool more = nr_meas_periodic_report_sent(e);
+  LOG_I(NR_RRC,
+        "PERIODIC_MR_TX measId=%ld n=%d frames=%u rsrp=%ld rsrq=%ld\n",
+        measId,
+        e->reports_sent,
+        e->elapsed_frames,
+        rsrp_idx,
+        rsrq_idx);
+  if (!more) {
+    LOG_I(NR_RRC, "PERIODIC_MR_END measId=%ld sent=%d\n", measId, e->reports_sent);
+    asn1cFreeStruc(asn_DEF_NR_VarMeasReport, nb->MeasReport[measId]);
+    asn1cFreeStruc(asn_DEF_NR_MeasIdToAddMod, nb->MeasId[measId]);
+  }
 }

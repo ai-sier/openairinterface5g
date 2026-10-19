@@ -63,6 +63,7 @@
 #include "RRC/NR/nr_rrc_common.h"
 #include "as_message.h"
 #include "common/utils/nr/nr_common.h"
+#include "openair2/RRC/NR_UE/nr_meas_periodic.h"
 #include "notified_fifo.h"
 
 #define NB_CNX_UE 2//MAX_MANAGED_RG_PER_MOBILE
@@ -204,6 +205,13 @@ typedef struct l3_measurements_s {
   long report_interval_ms;
   NR_timer_t TA2;
   NR_timer_t periodic_report_timer;
+  float filter_coeff_rsrq;
+  float filtered_rsrq_dB;
+  bool filtered_rsrq_valid;
+  // SSB measurements of the current measurement cycle, indexed by SSB index
+  nr_l3_beam_t beams[NR_MEAS_PERIODIC_MAX];
+  // state of periodical reporting, indexed by measId
+  nr_meas_periodic_t periodic[NR_MEAS_PERIODIC_MAX];
 } l3_measurements_t;
 
 typedef struct rrcPerNB {
@@ -248,6 +256,8 @@ typedef struct NR_UE_RRC_INST_s {
   e_NR_IntegrityProtAlgorithm  integrityProtAlgorithm;
   long keyToUse;
   bool as_security_activated;
+  // servingCellMO of the SpCell (0 if not configured)
+  long serving_cell_mo;
   /// Next Hop Chaining Count
   uint8_t nh[32];
   uint64_t nhcc;
