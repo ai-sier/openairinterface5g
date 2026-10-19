@@ -12,7 +12,7 @@ add_executable(test_nr_meas_periodical
   ${OPENAIR2_DIR}/RRC/NR_UE/nr_meas_periodic.c
   ${OPENAIR2_DIR}/LAYER2/nr_pdcp/asn1_utils.c
   ${OPENAIR2_DIR}/LAYER2/nr_rlc/asn1_utils.c)
-target_link_libraries(test_nr_meas_periodical PRIVATE nr_rrc SECURITY minimal_lib GTest::gtest UTIL)
+target_link_libraries(test_nr_meas_periodical PRIVATE nr_rrc nr_common SECURITY minimal_lib GTest::gtest UTIL)
 add_dependencies(tests test_nr_meas_periodical)
 add_test(NAME test_nr_meas_periodical
     COMMAND ./test_nr_meas_periodical)
