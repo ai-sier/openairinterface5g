@@ -67,6 +67,8 @@ typedef struct {
   uint8_t i2;
   uint8_t cqi;
   rlm_t radiolink_monitoring;
+  int16_t rsrq_dB_x2; // SS-RSRQ in 0.5 dB units
+  bool rsrq_valid;
 } fapi_nr_l1_measurements_t;
 
 typedef struct {

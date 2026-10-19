@@ -37,7 +37,15 @@
 
 typedef uint32_t channel_t;
 
-void nr_mac_rrc_meas_ind_ue(module_id_t module_id, uint32_t gNB_index, uint16_t Nid_cell, bool csi_meas, bool is_neighboring_cell, int rsrp_dBm)
+void nr_mac_rrc_meas_ind_ue(module_id_t module_id,
+                            uint32_t gNB_index,
+                            uint16_t Nid_cell,
+                            bool csi_meas,
+                            bool is_neighboring_cell,
+                            int rsrp_dBm,
+                            int ssb_index,
+                            int16_t rsrq_dB_x2,
+                            bool rsrq_valid)
 {
   MessageDef *message_p = itti_alloc_new_message(TASK_MAC_UE, 0, NR_RRC_MAC_MEAS_DATA_IND);
   NR_RRC_MAC_MEAS_DATA_IND(message_p).gnb_index = gNB_index;
@@ -45,6 +53,9 @@ void nr_mac_rrc_meas_ind_ue(module_id_t module_id, uint32_t gNB_index, uint16_t 
   NR_RRC_MAC_MEAS_DATA_IND(message_p).is_csi_meas = csi_meas;
   NR_RRC_MAC_MEAS_DATA_IND(message_p).is_neighboring_cell = is_neighboring_cell;
   NR_RRC_MAC_MEAS_DATA_IND(message_p).rsrp_dBm = rsrp_dBm;
+  NR_RRC_MAC_MEAS_DATA_IND(message_p).ssb_index = ssb_index;
+  NR_RRC_MAC_MEAS_DATA_IND(message_p).rsrq_dB_x2 = rsrq_dB_x2;
+  NR_RRC_MAC_MEAS_DATA_IND(message_p).rsrq_valid = rsrq_valid;
   itti_send_msg_to_task(TASK_RRC_NRUE, GNB_MODULE_ID_TO_INSTANCE(module_id), message_p);
 }
 

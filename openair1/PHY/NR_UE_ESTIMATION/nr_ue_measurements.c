@@ -185,8 +185,32 @@ uint32_t nr_ue_calculate_ssb_rsrp(const NR_DL_FRAME_PARMS *fp,
   return rsrp;
 }
 
+#define SSB_NB_RB 20
+
+// Average received power per RE over the SSB bandwidth (20 RBs) in the OFDM symbol containing the SSS
+static uint32_t nr_ue_calculate_ssb_rssi_per_re(const NR_DL_FRAME_PARMS *fp,
+                                                const c16_t rxdataF[][fp->samples_per_slot_wCP],
+                                                int symbol_offset,
+                                                int ssb_start_subcarrier)
+{
+  unsigned int ssb_offset = fp->first_carrier_offset + ssb_start_subcarrier;
+  uint8_t l_sss = (symbol_offset + 2) % fp->symbols_per_slot;
+  uint64_t power = 0;
+  int nb_re = 0;
+  for (int aarx = 0; aarx < fp->nb_antennas_rx; aarx++) {
+    const int16_t *rxF = (const int16_t *)&rxdataF[aarx][l_sss * fp->ofdm_symbol_size];
+    for (int k = 0; k < NR_NB_SC_PER_RB * SSB_NB_RB; k++) {
+      int re = (ssb_offset + k) % fp->ofdm_symbol_size;
+      power += ((int32_t)rxF[re * 2] * rxF[re * 2]) + ((int32_t)rxF[re * 2 + 1] * rxF[re * 2 + 1]);
+      nb_re++;
+    }
+  }
+  return nb_re > 0 ? power / nb_re : 0;
+}
+
 // This function implements:
 // - SS reference signal received power (SS-RSRP) as per clause 5.1.1 of 3GPP TS 38.215 version 16.3.0 Release 16
+// - SS reference signal received quality (SS-RSRQ) as per clause 5.1.3 of 3GPP TS 38.215
 // - no Layer 3 filtering implemented (no filterCoefficient provided from RRC)
 // Todo:
 // - Layer 3 filtering according to clause 5.5.3.2 of 3GPP TS 38.331 version 16.2.0 Release 16
@@ -219,13 +243,24 @@ void nr_ue_ssb_rsrp_measurements(PHY_VARS_NR_UE *ue,
   int SNRtimes10 = dB_fixed_x10(signal_pwr) - dB_fixed_x10(ue->measurements.n0_power_avg);
   ue->measurements.ssb_sinr_dB[ssb_index] = SNRtimes10 / 10.0;
 
+  // RSRQ = N * RSRP / RSSI, with RSSI the total power over the N = 20 RBs of the SSB
+  uint32_t rssi_per_re = nr_ue_calculate_ssb_rssi_per_re(fp, rxdataF, symbol_offset, fp->ssb_start_subcarrier);
+  bool rsrq_valid = rssi_per_re > 0 && rsrp_avg > 0;
+  float rsrq_dB = 0;
+  if (rsrq_valid) {
+    double rssi_lin = (double)rssi_per_re * NR_NB_SC_PER_RB * SSB_NB_RB;
+    rsrq_dB = 10 * log10(SSB_NB_RB * (double)rsrp_avg / rssi_lin);
+  }
+
   LOG_D(PHY,
-        "[UE %d] ssb %d SS-RSRP: %d dBm/RE (%f dB/RE), SS-SINR: %f dB\n",
+        "[UE %d] ssb %d SS-RSRP: %d dBm/RE (%f dB/RE), SS-SINR: %f dB, SS-RSRQ: %f dB (valid %d)\n",
         ue->Mod_id,
         ssb_index,
         ue->measurements.ssb_rsrp_dBm[ssb_index],
         rsrp_db_per_re,
-        ue->measurements.ssb_sinr_dB[ssb_index]);
+        ue->measurements.ssb_sinr_dB[ssb_index],
+        rsrq_dB,
+        rsrq_valid);
 
   // Send SS measurements to MAC
   if (!ue->if_inst || !ue->if_inst->dl_indication)
@@ -239,6 +274,8 @@ void nr_ue_ssb_rsrp_measurements(PHY_VARS_NR_UE *ue,
     .sinr_dB = ue->measurements.ssb_sinr_dB[ssb_index],
     .ssb_index = ssb_index,
     .is_neighboring_cell = false,
+    .rsrq_dB_x2 = rsrq_valid ? (int16_t)lroundf(rsrq_dB * 2) : 0,
+    .rsrq_valid = rsrq_valid,
   };
   nr_downlink_indication_t dl_indication = {0};
   fapi_nr_rx_indication_t rx_ind = {0};

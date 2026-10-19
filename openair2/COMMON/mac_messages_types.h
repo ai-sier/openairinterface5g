@@ -150,6 +150,9 @@ typedef struct NRRrcMacMeasDataInd_s {
   uint16_t Nid_cell;
   bool is_csi_meas;
   bool is_neighboring_cell;
+  int ssb_index;
+  int16_t rsrq_dB_x2;
+  bool rsrq_valid;
 } NRRrcMacMeasDataInd;
 
 typedef struct RrcMacBcchMbmsDataReq_s {

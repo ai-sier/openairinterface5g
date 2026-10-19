@@ -1526,7 +1526,10 @@ void nr_ue_process_l1_measurements(NR_UE_MAC_INST_t *mac, frame_t frame, int slo
                          l1_measurements->Nid_cell,
                          csi_meas,
                          l1_measurements->is_neighboring_cell,
-                         l1_measurements->rsrp_dBm);
+                         l1_measurements->rsrp_dBm,
+                         l1_measurements->ssb_index,
+                         l1_measurements->rsrq_dB_x2,
+                         l1_measurements->rsrq_valid);
 }
 
 static void set_harq_status(NR_UE_MAC_INST_t *mac,
