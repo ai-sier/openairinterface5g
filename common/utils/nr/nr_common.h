@@ -189,6 +189,12 @@ typedef struct meas_s {
 /** @brief Returns NR RSRP index per 3GPP TS 38.133 Table 10.1.6.1-1 */
 uint8_t get_rsrp_index(int rsrp_dBm);
 
+/** @brief Returns the RSRP-Range value (0..126) for layer 3 reporting per 3GPP TS 38.133 Table 10.1.6.1-1 */
+uint8_t nr_rsrp_to_l3_range(double rsrp_dBm);
+
+/** @brief Returns the RSRQ-Range value (0..127) for layer 3 reporting per 3GPP TS 38.133 Table 10.1.11.1-1 */
+uint8_t nr_rsrq_to_l3_range(double rsrq_dB);
+
 /**
  * @brief To start a timer
  * @param timer Timer to be started

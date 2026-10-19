@@ -163,6 +163,20 @@ uint8_t get_rsrp_index(int rsrp_dBm)
   return (uint8_t)index;
 }
 
+uint8_t nr_rsrp_to_l3_range(double rsrp_dBm)
+{
+  if (rsrp_dBm < -156)
+    return 0;
+  return (uint8_t)fmin(126, floor(rsrp_dBm + 156) + 1);
+}
+
+uint8_t nr_rsrq_to_l3_range(double rsrq_dB)
+{
+  if (rsrq_dB < -43)
+    return 0;
+  return (uint8_t)fmin(127, floor((rsrq_dB + 43) * 2) + 1);
+}
+
 // Reverse bits implementation based on http://graphics.stanford.edu/~seander/bithacks.html
 uint64_t reverse_bits(uint64_t in, int n_bits)
 {
