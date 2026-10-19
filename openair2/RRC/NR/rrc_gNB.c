@@ -628,6 +628,38 @@ static nr_a3_event_t *get_a3_configuration(gNB_RRC_INST *rrc, int pci)
   return NULL;
 }
 
+static NR_ReportInterval_t get_report_interval_enum(long ms)
+{
+  switch (ms) {
+    case 120: return NR_ReportInterval_ms120;
+    case 240: return NR_ReportInterval_ms240;
+    case 480: return NR_ReportInterval_ms480;
+    case 640: return NR_ReportInterval_ms640;
+    case 2048: return NR_ReportInterval_ms2048;
+    case 5120: return NR_ReportInterval_ms5120;
+    case 10240: return NR_ReportInterval_ms10240;
+    case 60000: return NR_ReportInterval_min1;
+    case 360000: return NR_ReportInterval_min6;
+    case 720000: return NR_ReportInterval_min12;
+    case 1800000: return NR_ReportInterval_min30;
+    default: return NR_ReportInterval_ms1024;
+  }
+}
+
+static long get_report_amount_enum(long amount)
+{
+  switch (amount) {
+    case 1: return NR_PeriodicalReportConfig__reportAmount_r1;
+    case 2: return NR_PeriodicalReportConfig__reportAmount_r2;
+    case 4: return NR_PeriodicalReportConfig__reportAmount_r4;
+    case 8: return NR_PeriodicalReportConfig__reportAmount_r8;
+    case 16: return NR_PeriodicalReportConfig__reportAmount_r16;
+    case 32: return NR_PeriodicalReportConfig__reportAmount_r32;
+    case 64: return NR_PeriodicalReportConfig__reportAmount_r64;
+    default: return NR_PeriodicalReportConfig__reportAmount_infinity;
+  }
+}
+
 static NR_ReportConfigToAddMod_t *prepare_periodic_event_report(const nr_per_event_t *per_event)
 {
   NR_ReportConfigToAddMod_t *rc = calloc(1, sizeof(*rc));
@@ -636,18 +668,21 @@ static NR_ReportConfigToAddMod_t *prepare_periodic_event_report(const nr_per_eve
 
   NR_PeriodicalReportConfig_t *prc = calloc(1, sizeof(*prc));
   prc->rsType = NR_NR_RS_Type_ssb;
-  prc->reportInterval = NR_ReportInterval_ms1024;
-  prc->reportAmount = NR_PeriodicalReportConfig__reportAmount_infinity;
+  prc->reportInterval = get_report_interval_enum(per_event->reportInterval_ms);
+  prc->reportAmount = get_report_amount_enum(per_event->reportAmount);
   prc->reportQuantityCell.rsrp = true;
-  prc->reportQuantityCell.rsrq = true;
-  prc->reportQuantityCell.sinr = true;
-  prc->reportQuantityRS_Indexes = calloc(1, sizeof(*prc->reportQuantityRS_Indexes));
-  prc->reportQuantityRS_Indexes->rsrp = true;
-  prc->reportQuantityRS_Indexes->rsrq = true;
-  prc->reportQuantityRS_Indexes->sinr = true;
-  asn1cCallocOne(prc->maxNrofRS_IndexesToReport, per_event->maxReportCells);
+  prc->reportQuantityCell.rsrq = per_event->rsrq;
+  prc->reportQuantityCell.sinr = per_event->sinr;
+  if (per_event->includeBeamMeasurements) {
+    prc->reportQuantityRS_Indexes = calloc(1, sizeof(*prc->reportQuantityRS_Indexes));
+    prc->reportQuantityRS_Indexes->rsrp = true;
+    prc->reportQuantityRS_Indexes->rsrq = true;
+    prc->reportQuantityRS_Indexes->sinr = true;
+    asn1cCallocOne(prc->maxNrofRS_IndexesToReport, per_event->maxNrofRS_IndexesToReport);
+  }
   prc->maxReportCells = per_event->maxReportCells;
   prc->includeBeamMeasurements = per_event->includeBeamMeasurements;
+  prc->useAllowedCellList = per_event->useAllowedCellList;
 
   NR_ReportConfigNR_t *rcnr = calloc(1, sizeof(*rcnr));
   rcnr->reportType.present = NR_ReportConfigNR__reportType_PR_periodical;
@@ -787,6 +822,29 @@ NR_MeasConfig_t *nr_rrc_get_measconfig(const gNB_RRC_INST *rrc, uint64_t nr_cell
   return NULL;
 }
 
+// periodical reportConfig of the measConfig, and the measId and measObjectId that use it
+static const NR_PeriodicalReportConfig_t *find_periodical_meas(const NR_MeasConfig_t *mc, long *measId, long *measObjectId)
+{
+  if (!mc || !mc->measIdToAddModList || !mc->reportConfigToAddModList)
+    return NULL;
+  for (int i = 0; i < mc->measIdToAddModList->list.count; i++) {
+    const NR_MeasIdToAddMod_t *m = mc->measIdToAddModList->list.array[i];
+    for (int j = 0; j < mc->reportConfigToAddModList->list.count; j++) {
+      const NR_ReportConfigToAddMod_t *rc = mc->reportConfigToAddModList->list.array[j];
+      if (rc->reportConfigId != m->reportConfigId
+          || rc->reportConfig.present != NR_ReportConfigToAddMod__reportConfig_PR_reportConfigNR)
+        continue;
+      const NR_ReportConfigNR_t *nr = rc->reportConfig.choice.reportConfigNR;
+      if (nr->reportType.present == NR_ReportConfigNR__reportType_PR_periodical) {
+        *measId = m->measId;
+        *measObjectId = m->measObjectId;
+        return nr->reportType.choice.periodical;
+      }
+    }
+  }
+  return NULL;
+}
+
 /** @brief Prepare the instance of RRCReconfigurationParams to be pass to RRC encoding */
 nr_rrc_reconfig_param_t get_RRCReconfiguration_params(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, uint8_t srb_reest_bitmap, bool drb_reestablish)
 {
@@ -803,6 +861,33 @@ nr_rrc_reconfig_param_t get_RRCReconfiguration_params(gNB_RRC_INST *rrc, gNB_RRC
                                     .drb_config_list = DRBs,
                                     .meas_config = UE->measConfig,
                                     .srb_config_list = SRBs};
+
+  long per_meas_id = 0;
+  long per_meas_obj_id = 0;
+  const NR_PeriodicalReportConfig_t *per = find_periodical_meas(UE->measConfig, &per_meas_id, &per_meas_obj_id);
+  // not re-sent at each reconfiguration, but always with a handover or re-establishment (drb_reestablish)
+  if (per && rrc->measurementConfiguration.per_event && rrc->measurementConfiguration.per_event->send_once && UE->meas_config_sent
+      && !drb_reestablish)
+    params.meas_config = NULL;
+  if (per && params.meas_config) {
+    NR_SpCellConfig_t *sp = UE->masterCellGroup ? UE->masterCellGroup->spCellConfig : NULL;
+    if (sp && sp->spCellConfigDedicated) {
+      // the DU does not know the measObjectId, so the CU sets servingCellMO
+      if (!sp->spCellConfigDedicated->servingCellMO)
+        asn1cCallocOne(sp->spCellConfigDedicated->servingCellMO, per_meas_obj_id);
+    } else {
+      LOG_W(NR_RRC, "UE %d: no spCellConfigDedicated, servingCellMO is not set\n", UE->rrc_ue_id);
+    }
+    long *mo = sp && sp->spCellConfigDedicated ? sp->spCellConfigDedicated->servingCellMO : NULL;
+    LOG_I(NR_RRC,
+          "PERIODIC_MEASCONFIG_TX ue=%d measId=%ld interval=%ld amount=%ld servingCellMO=%ld\n",
+          UE->rrc_ue_id,
+          per_meas_id,
+          rrc->measurementConfiguration.per_event ? rrc->measurementConfiguration.per_event->reportInterval_ms : 0L,
+          rrc->measurementConfiguration.per_event ? rrc->measurementConfiguration.per_event->reportAmount : 0L,
+          mo ? *mo : -1L);
+    UE->meas_config_sent = true;
+  }
 
   FOR_EACH_SEQ_ARR(rrc_pdu_session_param_t *, item, &UE->pduSessions) {
     pdusession_t *session = &item->param;
@@ -1539,6 +1624,22 @@ static void process_Periodical_Measurement_Report(gNB_RRC_UE_t *ue_ctxt, NR_Meas
   const NR_MeasId_t id = measurementReport->criticalExtensions.choice.measurementReport->measResults.measId;
   AssertFatal(id, "unexpected MeasResult for MeasurementId %ld received\n", id);
   asn1cCallocOne(ue_ctxt->measResults, measurementReport->criticalExtensions.choice.measurementReport->measResults);
+  ue_ctxt->periodic_rx_count++;
+  long rsrp = -1;
+  long rsrq = -1;
+  const NR_MeasResultServMO_t *serv = ue_ctxt->measResults->measResultServingMOList.list.count > 0
+                                          ? ue_ctxt->measResults->measResultServingMOList.list.array[0]
+                                          : NULL;
+  if (serv) {
+    const NR_MeasResultNR_t *r = &serv->measResultServingCell;
+    if (r->measResult.cellResults.resultsSSB_Cell) {
+      if (r->measResult.cellResults.resultsSSB_Cell->rsrp)
+        rsrp = *r->measResult.cellResults.resultsSSB_Cell->rsrp;
+      if (r->measResult.cellResults.resultsSSB_Cell->rsrq)
+        rsrq = *r->measResult.cellResults.resultsSSB_Cell->rsrq;
+    }
+  }
+  LOG_I(NR_RRC, "PERIODIC_MR_RX ue=%d measId=%ld n=%d rsrp=%ld rsrq=%ld\n", ue_ctxt->rrc_ue_id, id, ue_ctxt->periodic_rx_count, rsrp, rsrq);
   /* we "keep" the measurement report, so set to 0 */
   free(measurementReport->criticalExtensions.choice.measurementReport);
   measurementReport->criticalExtensions.choice.measurementReport = NULL;

@@ -382,6 +382,13 @@ typedef enum {
 #define MEASUREMENT_EVENTS_PERIODICAL_NR_OF_RS_INDEXES "maxNrofRS_IndexesToReport"
 #define MEASUREMENT_EVENTS_PCI_ID "physCellId"
 #define MEASUREMENT_EVENT_ENABLE "enable"
+#define MEASUREMENT_EVENTS_PERIODICAL_REPORT_INTERVAL "reportInterval"
+#define MEASUREMENT_EVENTS_PERIODICAL_REPORT_AMOUNT "reportAmount"
+#define MEASUREMENT_EVENTS_PERIODICAL_RSRQ "rsrq"
+#define MEASUREMENT_EVENTS_PERIODICAL_SINR "sinr"
+#define MEASUREMENT_EVENTS_PERIODICAL_USE_ALLOWED_CELL_LIST "useAllowedCellList"
+#define MEASUREMENT_EVENTS_PERIODICAL_MAX_REPORT_CELLS "maxReportCells"
+#define MEASUREMENT_EVENTS_PERIODICAL_SEND_ONCE "send_once"
 // clang-format off
 #define MEASUREMENT_A3_GLOBALPARAMS_DESC                                                                                      \
   {                                                                                                                               \
@@ -400,9 +407,16 @@ typedef enum {
 
 #define MEASUREMENT_PERIODICAL_GLOBALPARAMS_DESC                                                                                      \
   {                                                                                                                               \
-        {MEASUREMENT_EVENT_ENABLE, "enable the event", 0, .i64ptr = NULL, .defint64val = 1, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENT_ENABLE, "enable the event", 0, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0}, \
         {MEASUREMENT_EVENTS_PERIODICAL_BEAM_MEASUREMENT, "includeBeamMeasurements", PARAMFLAG_BOOL, .i64ptr = NULL, .defint64val = 1, TYPE_INT64, 0}, \
         {MEASUREMENT_EVENTS_PERIODICAL_NR_OF_RS_INDEXES, "maxNrofRS_IndexesToReport", 0, .i64ptr = NULL, .defint64val = 4, TYPE_INT64, 0},            \
+        {MEASUREMENT_EVENTS_PERIODICAL_REPORT_INTERVAL, "report interval in ms", 0, .i64ptr = NULL, .defint64val = 1024, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENTS_PERIODICAL_REPORT_AMOUNT, "number of reports (1,2,4,8,16,32,64 or 0 for infinity)", 0, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENTS_PERIODICAL_RSRQ, "report RSRQ", PARAMFLAG_BOOL, .i64ptr = NULL, .defint64val = 1, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENTS_PERIODICAL_SINR, "report SINR", PARAMFLAG_BOOL, .i64ptr = NULL, .defint64val = 1, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENTS_PERIODICAL_USE_ALLOWED_CELL_LIST, "useAllowedCellList", PARAMFLAG_BOOL, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENTS_PERIODICAL_MAX_REPORT_CELLS, "maxReportCells (-1: same as maxNrofRS_IndexesToReport)", 0, .i64ptr = NULL, .defint64val = -1, TYPE_INT64, 0}, \
+        {MEASUREMENT_EVENTS_PERIODICAL_SEND_ONCE, "send the measConfig only once per UE", PARAMFLAG_BOOL, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0}, \
   }
 // clang-format on
 
@@ -414,6 +428,13 @@ typedef enum {
 #define MEASUREMENT_EVENTS_HYSTERESIS_IDX 3
 #define MEASUREMENT_EVENTS_INCLUDE_BEAM_MEAS_IDX 1
 #define MEASUREMENT_EVENTS_MAX_RS_INDEX_TO_REPORT 2
+#define MEASUREMENT_EVENTS_PERIODICAL_REPORT_INTERVAL_IDX 3
+#define MEASUREMENT_EVENTS_PERIODICAL_REPORT_AMOUNT_IDX 4
+#define MEASUREMENT_EVENTS_PERIODICAL_RSRQ_IDX 5
+#define MEASUREMENT_EVENTS_PERIODICAL_SINR_IDX 6
+#define MEASUREMENT_EVENTS_PERIODICAL_USE_ALLOWED_CELL_LIST_IDX 7
+#define MEASUREMENT_EVENTS_PERIODICAL_MAX_REPORT_CELLS_IDX 8
+#define MEASUREMENT_EVENTS_PERIODICAL_SEND_ONCE_IDX 9
 
 /* PLMN ID configuration */
 

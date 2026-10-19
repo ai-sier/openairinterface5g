@@ -1149,9 +1149,9 @@ static void nr_rrc_ue_process_measConfig(rrcPerNB_t *rrc, NR_MeasConfig_t *const
           id,
           get_measurement_report_interval_ms(pc->reportInterval),
           pc->reportAmount == NR_PeriodicalReportConfig__reportAmount_infinity ? 0L : (1L << pc->reportAmount),
-          pc->reportQuantityCell ? pc->reportQuantityCell->rsrp : 0,
-          pc->reportQuantityCell ? pc->reportQuantityCell->rsrq : 0,
-          pc->reportQuantityCell ? pc->reportQuantityCell->sinr : 0);
+          pc->reportQuantityCell.rsrp,
+          pc->reportQuantityCell.rsrq,
+          pc->reportQuantityCell.sinr);
   }
 }
 
@@ -3311,7 +3311,7 @@ static bool rrc_ue_generate_periodic_measurementReport(rrcPerNB_t *nb, instance_
 
   *rsrp_idx = nr_rsrp_to_l3_range(l3m->serving_cell.ss_rsrp_dBm.val);
   // RSRQ is reported if configured in reportQuantityCell and a valid value exists
-  bool rsrq_valid = pc->reportQuantityCell && pc->reportQuantityCell->rsrq && l3m->filtered_rsrq_valid;
+  bool rsrq_valid = pc->reportQuantityCell.rsrq && l3m->filtered_rsrq_valid;
   *rsrq_idx = rsrq_valid ? nr_rsrq_to_l3_range(l3m->filtered_rsrq_dB) : -1;
 
   uint8_t buffer[NR_RRC_BUF_SIZE];

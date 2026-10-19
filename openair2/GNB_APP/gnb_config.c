@@ -1950,7 +1950,44 @@ static void fill_measurement_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
   if (*Periodical_EventParams[MEASUREMENT_EVENTS_ENABLE_IDX].i64ptr) {
     nr_per_event_t *periodic_event = (nr_per_event_t *)calloc(1, sizeof(nr_per_event_t));
     periodic_event->includeBeamMeasurements = *Periodical_EventParams[MEASUREMENT_EVENTS_INCLUDE_BEAM_MEAS_IDX].i64ptr;
-    periodic_event->maxReportCells = *Periodical_EventParams[MEASUREMENT_EVENTS_MAX_RS_INDEX_TO_REPORT].i64ptr;
+    periodic_event->maxNrofRS_IndexesToReport = *Periodical_EventParams[MEASUREMENT_EVENTS_MAX_RS_INDEX_TO_REPORT].i64ptr;
+    long max_report_cells = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_MAX_REPORT_CELLS_IDX].i64ptr;
+    // -1: keep the previous behavior, maxReportCells follows maxNrofRS_IndexesToReport
+    periodic_event->maxReportCells = max_report_cells == -1 ? periodic_event->maxNrofRS_IndexesToReport : max_report_cells;
+    periodic_event->reportInterval_ms = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_REPORT_INTERVAL_IDX].i64ptr;
+    periodic_event->reportAmount = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_REPORT_AMOUNT_IDX].i64ptr;
+    periodic_event->rsrq = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_RSRQ_IDX].i64ptr;
+    periodic_event->sinr = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_SINR_IDX].i64ptr;
+    periodic_event->useAllowedCellList = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_USE_ALLOWED_CELL_LIST_IDX].i64ptr;
+    periodic_event->send_once = *Periodical_EventParams[MEASUREMENT_EVENTS_PERIODICAL_SEND_ONCE_IDX].i64ptr;
+
+    static const long allowed_intervals[] = {120, 240, 480, 640, 1024, 2048, 5120, 10240, 60000, 360000, 720000, 1800000};
+    bool interval_ok = false;
+    for (int i = 0; i < sizeof(allowed_intervals) / sizeof(allowed_intervals[0]); i++)
+      interval_ok |= allowed_intervals[i] == periodic_event->reportInterval_ms;
+    long amount = periodic_event->reportAmount;
+    bool amount_ok = amount == 0 || (amount > 0 && amount <= 64 && (amount & (amount - 1)) == 0);
+    bool cells_ok = periodic_event->maxReportCells >= 1 && periodic_event->maxReportCells <= 32;
+    if (!interval_ok || !amount_ok || !cells_ok) {
+      LOG_E(GNB_APP,
+            "Periodical: invalid value reportInterval=%ld reportAmount=%ld maxReportCells=%ld\n",
+            periodic_event->reportInterval_ms,
+            periodic_event->reportAmount,
+            periodic_event->maxReportCells);
+      exit(1);
+    }
+    LOG_I(GNB_APP,
+          "Periodical measurement: reportInterval=%ld ms reportAmount=%ld rsrq=%d sinr=%d useAllowedCellList=%d maxReportCells=%ld "
+          "includeBeamMeasurements=%d maxNrofRS_IndexesToReport=%ld send_once=%d\n",
+          periodic_event->reportInterval_ms,
+          periodic_event->reportAmount,
+          periodic_event->rsrq,
+          periodic_event->sinr,
+          periodic_event->useAllowedCellList,
+          periodic_event->maxReportCells,
+          periodic_event->includeBeamMeasurements,
+          periodic_event->maxNrofRS_IndexesToReport,
+          periodic_event->send_once);
 
     measurementConfig->per_event = periodic_event;
   }

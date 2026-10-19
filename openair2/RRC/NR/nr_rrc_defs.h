@@ -174,6 +174,8 @@ typedef struct gNB_RRC_UE_s {
 
   NR_SRB_INFO_TABLE_ENTRY Srb[NR_NUM_SRB];
   NR_MeasConfig_t                   *measConfig;
+  bool meas_config_sent; // measConfig has been sent once (Periodical.send_once)
+  int periodic_rx_count; // number of periodical MeasurementReport received
   nr_handover_context_t *ho_context;
   NR_MeasResults_t                  *measResults;
 
@@ -276,6 +278,13 @@ typedef struct {
 typedef struct {
   long maxReportCells;
   bool includeBeamMeasurements;
+  long maxNrofRS_IndexesToReport;
+  long reportInterval_ms;
+  long reportAmount; // 1, 2, 4, 8, 16, 32, 64 or 0 for infinity
+  bool rsrq;
+  bool sinr;
+  bool useAllowedCellList;
+  bool send_once;
 } nr_per_event_t;
 
 typedef struct {
